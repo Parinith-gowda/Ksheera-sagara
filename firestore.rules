@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Helper: Cow ---
+    function isValidCow(data) {
+      return data.keys().hasAll(['id', 'name']) 
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 100
+        && (!('breed' in data) || (data.breed is string && data.breed.size() <= 100))
+        && (!('tagNumber' in data) || (data.tagNumber is string && data.tagNumber.size() <= 50));
+    }
+
+    // --- Validation Helper: MilkEntry ---
+    function isValidMilkEntry(data) {
+      return data.keys().hasAll(['id', 'date', 'litres', 'amountPaid'])
+        && data.id is string && data.id.size() <= 128
+        && data.date is string 
+        && data.litres is number && data.litres >= 0
+        && data.amountPaid is number && data.amountPaid >= 0
+        && (!('cowId' in data) || (data.cowId is string && data.cowId.size() <= 128))
+        && (!('fatPercent' in data) || (data.fatPercent is number && data.fatPercent >= 0))
+        && (!('snfPercent' in data) || (data.snfPercent is number && data.snfPercent >= 0));
+    }
+
+    // --- Validation Helper: ExpenseEntry ---
+    function isValidExpenseEntry(data) {
+      return data.keys().hasAll(['id', 'date', 'category', 'amount'])
+        && data.id is string && data.id.size() <= 128
+        && data.date is string
+        && data.category in ['Fodder', 'Medical', 'Labor', 'Electricity', 'Other']
+        && data.amount is number && data.amount >= 0
+        && (!('description' in data) || (data.description is string && data.description.size() <= 500));
+    }
+
+    // --- Rules ---
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      match /cows/{cowId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidCow(incoming()) && isValidId(cowId);
+        allow update: if isOwner(userId) && isValidCow(incoming());
+        allow delete: if isOwner(userId);
+      }
+
+      match /milk_entries/{entryId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidMilkEntry(incoming()) && isValidId(entryId);
+        allow update: if isOwner(userId) && isValidMilkEntry(incoming());
+        allow delete: if isOwner(userId);
+      }
+
+      match /expenses/{expenseId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidExpenseEntry(incoming()) && isValidId(expenseId);
+        allow update: if isOwner(userId) && isValidExpenseEntry(incoming());
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
